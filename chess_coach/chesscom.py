@@ -23,7 +23,7 @@ import requests
 BASE = "https://api.chess.com/pub"
 
 # chess.com asks for a contact in the UA. Put a real one here.
-USER_AGENT = "chess-coach-pipeline/1.0 (contact: connerherron@gmail.com)"
+USER_AGENT = "chess-coach-pipeline/1.0 (contact: you@example.com)"
 
 DRAW_RESULTS = {
     "stalemate", "agreed", "repetition", "insufficient",

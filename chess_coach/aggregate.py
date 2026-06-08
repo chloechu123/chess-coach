@@ -12,7 +12,7 @@ invent evaluations.
 
 from __future__ import annotations
 
-from collections import defaultdict
+from collections import defaultdict, Counter
 from statistics import mean
 from typing import Optional
 
@@ -115,8 +115,7 @@ def build_features(games: list[dict]) -> dict:
         ) if losing_games else None,
     }
 
-    # rating trend (first vs last available)
-    rated = [g["user_rating"] for g in games_sorted if g.get("user_rating")]
+    # rating trend is computed below, within a single time-control pool
 
     # worst moments across all games (top 12 by win_drop), for concrete coaching
     moments = []
@@ -145,6 +144,22 @@ def build_features(games: list[dict]) -> dict:
     for g in games_sorted:
         by_tc[g.get("time_class") or "unknown"].append(g)
 
+    # Rating trend MUST stay within one time-control pool. Blitz/rapid/bullet
+    # ratings live on separate scales, so comparing across them (e.g. a rapid
+    # game to a later blitz game) yields a delta that means nothing. We report
+    # the trend for the most-played pool, plus per-pool deltas for transparency.
+    def _delta(gs):
+        r = [g["user_rating"] for g in gs if g.get("user_rating")]
+        return {"start": r[0], "end": r[-1],
+                "delta": (r[-1] - r[0]) if len(r) >= 2 else None} if r else \
+               {"start": None, "end": None, "delta": None}
+
+    rated_tc = [tc for tc, gs in by_tc.items()
+                if tc != "unknown" and any(g.get("user_rating") for g in gs)]
+    dominant_tc = (Counter({tc: len(by_tc[tc]) for tc in rated_tc}).most_common(1)[0][0]
+                   if rated_tc else None)
+    dom = _delta(by_tc[dominant_tc]) if dominant_tc else _delta([])
+
     return {
         "n_games": n,
         "date_range": {
@@ -152,9 +167,11 @@ def build_features(games: list[dict]) -> dict:
             "to_epoch": games_sorted[-1].get("end_time"),
         },
         "rating": {
-            "start": rated[0] if rated else None,
-            "end": rated[-1] if rated else None,
-            "delta": (rated[-1] - rated[0]) if len(rated) >= 2 else None,
+            "time_class": dominant_tc,
+            "start": dom["start"],
+            "end": dom["end"],
+            "delta": dom["delta"],
+            "by_time_class": {tc: _delta(by_tc[tc])["delta"] for tc in rated_tc},
         },
         "overall": _wdl(games_sorted),
         "by_color": {
