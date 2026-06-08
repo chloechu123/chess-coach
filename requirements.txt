@@ -1,0 +1,6 @@
+chess>=1.11
+anthropic>=0.40
+requests>=2.31
+# optional backends — omit if using LocalStore / no delivery
+supabase>=2.0
+notion-client>=2.0

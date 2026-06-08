@@ -1,0 +1,225 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Chess Coach — read your games</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,600;1,9..144,400&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --ink:#ece6d8; --ink-dim:#a39c8b; --bg:#13130f; --panel:#1b1b15;
+    --line:#33322a; --amber:#d9a441; --green:#7c9070; --red:#c2624f;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; background:
+      radial-gradient(1200px 600px at 80% -10%, #20201733, transparent),
+      var(--bg);
+    color:var(--ink); font-family:"Fraunces",serif; line-height:1.5;
+    -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:920px; margin:0 auto; padding:48px 22px 90px}
+  header h1{font-size:clamp(34px,6vw,58px); font-weight:600; margin:0;
+    letter-spacing:-.02em; font-optical-sizing:auto}
+  header h1 .pawn{color:var(--amber)}
+  header p{color:var(--ink-dim); font-size:18px; max-width:54ch; margin:.5em 0 0}
+  .mono{font-family:"Space Mono",monospace}
+
+  .panel{background:var(--panel); border:1px solid var(--line); border-radius:14px}
+  form.search{display:flex; gap:10px; flex-wrap:wrap; align-items:center;
+    padding:16px; margin:34px 0 10px}
+  form.search input[type=text]{
+    flex:1 1 240px; min-width:200px; background:#100f0b; border:1px solid var(--line);
+    color:var(--ink); padding:13px 15px; border-radius:9px; font-size:17px;
+    font-family:"Space Mono",monospace}
+  form.search input:focus{outline:none; border-color:var(--amber)}
+  form.search select{background:#100f0b;border:1px solid var(--line);color:var(--ink-dim);
+    padding:13px 10px;border-radius:9px;font-family:"Space Mono",monospace}
+  button.go{background:var(--amber); color:#1a1304; border:none; padding:13px 22px;
+    border-radius:9px; font-family:"Space Mono",monospace; font-weight:700; font-size:15px;
+    cursor:pointer; transition:transform .08s ease, filter .2s}
+  button.go:hover{filter:brightness(1.08)} button.go:active{transform:translateY(1px)}
+  button.go:disabled{opacity:.5; cursor:wait}
+  .hint{color:var(--ink-dim); font-size:13px; padding:0 16px}
+
+  #status{min-height:22px; margin:18px 4px; color:var(--amber); font-family:"Space Mono",monospace; font-size:14px}
+  .dots::after{content:""; animation:dots 1.4s steps(4,end) infinite}
+  @keyframes dots{0%{content:""}25%{content:"."}50%{content:".."}75%{content:"..."}}
+
+  .headline{font-size:clamp(22px,3.4vw,30px); line-height:1.3; margin:8px 0 26px;
+    border-left:3px solid var(--amber); padding-left:18px}
+  section.block{margin:30px 0}
+  h2.k{font-family:"Space Mono",monospace; font-size:12px; letter-spacing:.22em;
+    text-transform:uppercase; color:var(--ink-dim); margin:0 0 14px}
+
+  .stats{display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px}
+  .stat{padding:16px; border-radius:12px; background:var(--panel); border:1px solid var(--line)}
+  .stat .v{font-family:"Space Mono",monospace; font-size:27px; color:var(--ink)}
+  .stat .v small{font-size:15px;color:var(--ink-dim)}
+  .stat .l{color:var(--ink-dim); font-size:13px; margin-top:4px}
+
+  .focus{display:grid; gap:14px}
+  .card{padding:20px; border-radius:13px; background:var(--panel); border:1px solid var(--line);
+    position:relative; overflow:hidden}
+  .card::before{content:""; position:absolute; left:0; top:0; bottom:0; width:3px; background:var(--amber)}
+  .card h3{margin:0 0 6px; font-size:21px; font-weight:600}
+  .card .ev{font-family:"Space Mono",monospace; font-size:13px; color:var(--green); margin-bottom:10px}
+  .card .why{color:var(--ink-dim); margin:0 0 12px}
+  .card .drill{font-size:15px} .card .drill b{color:var(--amber); font-family:"Space Mono",monospace;
+    font-size:12px; letter-spacing:.15em; text-transform:uppercase; display:block; margin-bottom:3px}
+
+  table.moves{width:100%; border-collapse:collapse; font-family:"Space Mono",monospace; font-size:13px}
+  table.moves td{padding:10px 8px; border-bottom:1px solid var(--line); vertical-align:top}
+  table.moves .played{color:var(--red)} table.moves .best{color:var(--green)}
+  table.moves a{color:var(--amber); text-decoration:none} table.moves a:hover{text-decoration:underline}
+  .drop{color:var(--red)}
+
+  .prose{color:var(--ink-dim); max-width:64ch}
+  footer{margin-top:50px; color:var(--ink-dim); font-size:13px; border-top:1px solid var(--line); padding-top:18px}
+  .reveal{opacity:0; transform:translateY(8px); animation:rise .5s ease forwards}
+  @keyframes rise{to{opacity:1; transform:none}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1><span class="pawn">&#9817;</span> Chess Coach</h1>
+    <p>Enter any chess.com username. Stockfish evaluates the games; an AI coach
+       reads the patterns across them and tells you what to fix. No login — it
+       only uses public game data.</p>
+  </header>
+
+  <form class="search panel" id="form">
+    <input type="text" id="username" placeholder="chess.com username" autocomplete="off" spellcheck="false" />
+    <select id="games">
+      <option value="6">6 games</option>
+      <option value="8" selected>8 games</option>
+      <option value="12">12 games</option>
+    </select>
+    <button class="go" id="go" type="submit">Analyze</button>
+  </form>
+  <div class="hint">Recent rated standard games. Bullet/variant games are skipped.</div>
+
+  <div id="status"></div>
+  <div id="results"></div>
+
+  <footer>
+    Stockfish does the evaluating; the coach only explains the numbers — it never
+    re-evaluates positions. Built on the chess.com Published-Data API.
+  </footer>
+</div>
+
+<script>
+// ── set this to your deployed Modal URL, e.g. "https://you--chess-coach-web-fastapi-app.modal.run"
+const API_BASE = "";
+
+const $ = s => document.querySelector(s);
+const statusEl = $("#status"), resultsEl = $("#results"), goBtn = $("#go");
+
+$("#form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const username = $("#username").value.trim().replace(/^@/,"");
+  if (!username) return;
+  const max_games = +$("#games").value;
+  resultsEl.innerHTML = ""; goBtn.disabled = true;
+  statusEl.innerHTML = `Pulling games and running Stockfish<span class="dots"></span>`;
+
+  try {
+    let data;
+    if (!API_BASE) {                       // demo mode until backend is wired
+      await new Promise(r => setTimeout(r, 900));
+      data = DEMO(username);
+    } else {
+      const res = await fetch(API_BASE + "/api/analyze", {
+        method:"POST", headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({username, max_games})
+      });
+      data = await res.json();
+    }
+    if (!data.ok) { statusEl.textContent = data.error || "Something went wrong."; return; }
+    statusEl.textContent = data.cached ? "Loaded from cache." : `Analyzed ${data.n_games} games.`;
+    render(data);
+  } catch (err) {
+    statusEl.textContent = "Request failed: " + err.message;
+  } finally { goBtn.disabled = false; }
+});
+
+function render(d){
+  const c = d.coaching || {}, s = d.snapshot || {};
+  const ov = s.overall || {}, bc = s.by_color || {};
+  const fmtRec = o => o && o.games ? `${o.wins||0}/${o.draws||0}/${o.losses||0}` : "—";
+  const out = [];
+
+  if (c.headline) out.push(`<div class="headline reveal">${esc(c.headline)}</div>`);
+
+  out.push(`<section class="block reveal"><h2 class="k">Snapshot · ${d.username}</h2>
+    <div class="stats">
+      ${stat(ov.accuracy!=null?ov.accuracy:"—","accuracy","%")}
+      ${stat(fmtRec(ov),"record (W/D/L)")}
+      ${stat((s.error_counts&&s.error_counts.blunder)||0,"blunders")}
+      ${stat(white_black(bc),"by color")}
+    </div></section>`);
+
+  if ((c.focus_areas||[]).length){
+    out.push(`<section class="block reveal"><h2 class="k">What to fix</h2><div class="focus">`);
+    c.focus_areas.forEach(f => out.push(`<div class="card">
+      <h3>${esc(f.title||"")}</h3>
+      ${f.evidence?`<div class="ev">${esc(f.evidence)}</div>`:""}
+      ${f.why?`<p class="why">${esc(f.why)}</p>`:""}
+      ${f.drill?`<div class="drill"><b>Drill</b>${esc(f.drill)}</div>`:""}
+    </div>`));
+    out.push(`</div></section>`);
+  }
+
+  if ((d.worst_moments||[]).length){
+    out.push(`<section class="block reveal"><h2 class="k">Worst moments</h2>
+      <table class="moves"><tbody>`);
+    d.worst_moments.forEach(m => out.push(`<tr>
+      <td>move ${m.fullmove}</td>
+      <td class="played">${esc(m.played)}</td>
+      <td class="best">best ${esc(m.engine_best)}</td>
+      <td class="drop">−${m.win_drop_pct}%</td>
+      <td>${m.phase}</td>
+      <td>${m.game_url?`<a href="${m.game_url}" target="_blank" rel="noopener">view</a>`:""}</td>
+    </tr>`));
+    out.push(`</tbody></table></section>`);
+  }
+
+  if (c.opening_advice) out.push(blockProse("Openings", c.opening_advice));
+  if (c.progress_note)  out.push(blockProse("Trend", c.progress_note));
+
+  resultsEl.innerHTML = out.join("");
+  // stagger the reveals
+  [...resultsEl.querySelectorAll(".reveal")].forEach((el,i)=>el.style.animationDelay=(i*0.07)+"s");
+}
+
+const stat=(v,l,suf="")=>`<div class="stat"><div class="v">${v}${suf?`<small>${suf}</small>`:""}</div><div class="l">${l}</div></div>`;
+const white_black=bc=>{const w=bc.white||{},b=bc.black||{};
+  return `<span style="font-size:15px">W ${w.score_pct??"—"}% · B ${b.score_pct??"—"}%</span>`;};
+const blockProse=(k,t)=>`<section class="block reveal"><h2 class="k">${k}</h2><p class="prose">${esc(t)}</p></section>`;
+const esc=s=>String(s).replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
+
+// demo payload so the page renders before the backend exists
+function DEMO(u){return {ok:true, cached:false, username:u, n_games:8,
+  snapshot:{overall:{games:8,wins:3,draws:1,losses:4,score_pct:43.8,accuracy:78.2},
+    by_color:{white:{games:4,score_pct:50},black:{games:4,score_pct:37.5}},
+    error_counts:{inaccuracy:11,mistake:6,blunder:5}},
+  worst_moments:[
+    {fullmove:19,played:"Bxh3",engine_best:"Rfe8",win_drop_pct:41.2,phase:"middlegame",game_url:"#"},
+    {fullmove:27,played:"Qd2",engine_best:"Rxd5",win_drop_pct:33.8,phase:"middlegame",game_url:"#"},
+    {fullmove:34,played:"Kf1",engine_best:"Kf3",win_drop_pct:29.1,phase:"endgame",game_url:"#"}],
+  coaching:{headline:"You build good positions, then hand them back in the early middlegame.",
+    focus_areas:[
+      {title:"Blunders cluster on moves 16–28",evidence:"5 blunders, 4 of them in the middlegame",
+       why:"Likely calculation/time pressure right as positions get sharp.",
+       drill:"Before each move in that phase, name your opponent's last threat out loud."},
+      {title:"Worse as Black",evidence:"White 50% vs Black 37.5%",
+       why:"Passive opening setups cede the initiative early.",
+       drill:"Pick one repertoire reply to 1.e4 and 1.d4 and play only that for two weeks."}],
+    opening_advice:"This is demo data — wire API_BASE to your Modal endpoint for real analysis.",
+    progress_note:""}};}
+</script>
+</body>
+</html>

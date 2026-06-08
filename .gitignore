@@ -1,0 +1,13 @@
+# secrets & local state — never commit these
+.env
+state/
+
+# python
+__pycache__/
+*.pyc
+*.egg-info/
+.venv/
+venv/
+
+# os
+.DS_Store
