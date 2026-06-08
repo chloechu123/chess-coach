@@ -75,6 +75,11 @@ class LocalStore:
         data.setdefault("items", []).append(record)
         self._save(path, data)
 
+    def get_users(self) -> list[dict]:
+        path = os.path.join(self.dir, "users.json")
+        data = self._load(path)
+        return data.get("items", []) if isinstance(data, dict) else (data or [])
+
 
 class SupabaseStore:
     def __init__(self, url: str, key: str):
@@ -109,6 +114,10 @@ class SupabaseStore:
 
     def log_run(self, record: dict):
         self.sb.table("runs").insert(record).execute()
+
+    def get_users(self) -> list[dict]:
+        return (self.sb.table("users").select("*")
+                .eq("active", True).order("username").execute().data)
 
 
 def get_store(cfg) -> object:

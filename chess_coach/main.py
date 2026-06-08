@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import sys
+from typing import Optional
 
 from .config import cfg
 from . import chesscom, analysis, aggregate, coach, deliver
@@ -43,11 +44,11 @@ def _record_from(game: dict, ga: analysis.GameAnalysis, username: str) -> dict:
     }
 
 
-def _analyze_new_games(store, engine, since_epoch):
+def _analyze_new_games(store, engine, since_epoch, username, time_classes, rated_only):
     new_count = 0
     for game in chesscom.iter_games(
-        cfg.chesscom_username, since_epoch=since_epoch,
-        rated_only=cfg.rated_only, time_classes=cfg.time_classes,
+        username, since_epoch=since_epoch,
+        rated_only=rated_only, time_classes=time_classes,
     ):
         if not game.get("pgn") or store.is_analyzed(game["game_id"]):
             continue
@@ -57,52 +58,71 @@ def _analyze_new_games(store, engine, since_epoch):
         )
         if ga is None:
             continue
-        store.save_game(_record_from(game, ga, cfg.chesscom_username))
+        store.save_game(_record_from(game, ga, username))
         new_count += 1
         if new_count % 10 == 0:
             print(f"  analyzed {new_count} new games...", file=sys.stderr)
     return new_count
 
 
-def run(mode: str):
-    if not cfg.chesscom_username:
-        sys.exit("Set CHESSCOM_USERNAME")
-    if not cfg.anthropic_api_key:
-        sys.exit("Set ANTHROPIC_API_KEY")
+def _resolve_users(store, only_username=None) -> list[dict]:
+    """The roster to process. Prefer a `users` table; fall back to the single
+    configured user so an existing single-tenant setup keeps working unchanged.
+    Per-user delivery targets default to the global config when not overridden,
+    so everything lands in YOUR Notion/Slack unless a user says otherwise."""
+    rows = []
+    getter = getattr(store, "get_users", None)
+    if getter:
+        try:
+            rows = getter() or []
+        except Exception as e:
+            print(f"[users] table lookup failed ({e}); using configured user", file=sys.stderr)
 
-    store = get_store(cfg)
-    engine = analysis.open_engine(cfg.stockfish_path, cfg.engine_threads, cfg.engine_hash_mb)
+    if not rows:
+        if not cfg.chesscom_username:
+            return []
+        rows = [{"username": cfg.chesscom_username, "display_name": cfg.chesscom_username,
+                 "time_classes": list(cfg.time_classes) if cfg.time_classes else None,
+                 "slack_webhook": None, "notion_db_id": None,
+                 "backfill_months": cfg.backfill_months, "active": True}]
 
-    try:
-        if mode == "backfill":
-            if cfg.backfill_months > 0:
-                cutoff = dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=30 * cfg.backfill_months)
-                since = int(cutoff.timestamp())
-                window_since = since
-                tc = f" ({','.join(sorted(cfg.time_classes))})" if cfg.time_classes else ""
-                period_label = f"Last {cfg.backfill_months} month(s){tc}"
-            else:
-                since = None
-                window_since = None
-                period_label = "Full history"
-        else:  # incremental
-            since = store.last_end_time(cfg.chesscom_username)
-            window_since = since
-            period_label = f"Games since {dt.datetime.utcfromtimestamp(since).date()}" if since else "First run"
+    users = []
+    for r in rows:
+        if not r.get("active", True):
+            continue
+        if only_username and r["username"].lower() != only_username.lower():
+            continue
+        tcs = r.get("time_classes")
+        users.append({
+            "username": r["username"],
+            "display_name": r.get("display_name") or r["username"],
+            "time_classes": set(tcs) if tcs else (cfg.time_classes or None),
+            "rated_only": r.get("rated_only", cfg.rated_only),
+            "slack_webhook": r.get("slack_webhook") or cfg.slack_webhook_url,
+            "notion_db_id": r.get("notion_db_id") or cfg.notion_database_id,
+            "backfill_months": r.get("backfill_months", cfg.backfill_months),
+        })
+    return users
 
-        print(f"[{mode}] pulling & analyzing new games...", file=sys.stderr)
-        new = _analyze_new_games(store, engine, since)
-        print(f"[{mode}] {new} new games analyzed", file=sys.stderr)
-    finally:
-        engine.quit()
 
-    # The digest always coaches on a ROLLING 30-DAY window ("what to drill now"),
-    # with an ALL-TIME baseline for the trend line. These answer different questions;
-    # how much history we analyze (above) is separate from what the digest reports.
+def _run_user(user: dict, mode: str, store, engine):
+    name = user["username"]
+    if mode == "backfill":
+        months = user["backfill_months"]
+        since = int((dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=30 * months)).timestamp()) \
+            if months and months > 0 else None
+    else:
+        since = store.last_end_time(name)
+
+    print(f"[{mode}:{name}] pulling & analyzing new games...", file=sys.stderr)
+    new = _analyze_new_games(store, engine, since, name, user["time_classes"], user["rated_only"])
+    print(f"[{mode}:{name}] {new} new games analyzed", file=sys.stderr)
+
+    # Rolling 30-day window for coaching + all-time baseline for the trend line.
     recent_since = int((dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=30)).timestamp())
-    recent = aggregate.build_features(store.get_games(cfg.chesscom_username, since_epoch=recent_since))
-    baseline = aggregate.build_features(store.get_games(cfg.chesscom_username))
-    print(f"[{mode}] recent(30d)={recent.get('n_games')} baseline(all)={baseline.get('n_games')}",
+    recent = aggregate.build_features(store.get_games(name, since_epoch=recent_since))
+    baseline = aggregate.build_features(store.get_games(name))
+    print(f"[{mode}:{name}] recent(30d)={recent.get('n_games')} baseline(all)={baseline.get('n_games')}",
           file=sys.stderr)
 
     if recent.get("n_games", 0) > 0:
@@ -120,10 +140,10 @@ def run(mode: str):
         status, result = f"coach_error: {e}", {
             "headline": f"Coaching failed: {e}", "digest_markdown": "", "focus_areas": []}
 
-    title = f"Chess coaching — {dt.date.today().isoformat()} ({features.get('n_games')} games)"
+    title = f"Chess coaching — {user['display_name']} — {dt.date.today().isoformat()} ({features.get('n_games')} games)"
     store.save_digest({
         "created_at": dt.datetime.utcnow().isoformat(),
-        "username": cfg.chesscom_username.lower(),
+        "username": name.lower(),
         "period_label": window_label,
         "n_games": features.get("n_games"),
         "features": features,
@@ -133,30 +153,30 @@ def run(mode: str):
     })
 
     digest_url = None
-    if cfg.notion_api_key and cfg.notion_database_id:
+    if cfg.notion_api_key and user["notion_db_id"]:
         try:
             digest_url = deliver.deliver_notion(
-                cfg.notion_api_key, cfg.notion_database_id, title,
+                cfg.notion_api_key, user["notion_db_id"], title,
                 result, features, date_iso=dt.date.today().isoformat(),
+                player=user["display_name"],
             )
-            print(f"[deliver] notion: {digest_url}", file=sys.stderr)
+            print(f"[deliver:{name}] notion: {digest_url}", file=sys.stderr)
         except Exception as e:
-            print(f"[deliver] notion failed: {e}", file=sys.stderr)
+            print(f"[deliver:{name}] notion failed: {e}", file=sys.stderr)
 
-    if cfg.slack_webhook_url:
+    if user["slack_webhook"]:
         try:
-            deliver.deliver_slack(cfg.slack_webhook_url, result.get("digest_markdown", ""),
-                                  features=features, digest_url=digest_url,
-                                  headline=result.get("headline"))
-            print("[deliver] slack sent", file=sys.stderr)
+            headline = f"{user['display_name']}: {result.get('headline','')}"
+            deliver.deliver_slack(user["slack_webhook"], result.get("digest_markdown", ""),
+                                  features=features, digest_url=digest_url, headline=headline)
+            print(f"[deliver:{name}] slack sent", file=sys.stderr)
         except Exception as e:
-            print(f"[deliver] slack failed: {e}", file=sys.stderr)
+            print(f"[deliver:{name}] slack failed: {e}", file=sys.stderr)
 
-    # Heartbeat: write a row EVERY run so a quiet week (0 new games) is distinguishable
-    # from a dead scheduler. Query `runs` to confirm the cron is alive.
     try:
         store.log_run({
             "created_at": dt.datetime.utcnow().isoformat(),
+            "username": name.lower(),
             "mode": mode,
             "new_games": new,
             "recent_games": recent.get("n_games"),
@@ -164,10 +184,39 @@ def run(mode: str):
             "status": status,
         })
     except Exception as e:
-        print(f"[heartbeat] log_run failed: {e}", file=sys.stderr)
+        print(f"[heartbeat:{name}] log_run failed: {e}", file=sys.stderr)
 
-    # always print the digest to stdout too
-    print("\n" + (result.get("digest_markdown") or result.get("headline", "")))
+    print(f"\n=== {user['display_name']} ===\n"
+          + (result.get("digest_markdown") or result.get("headline", "")))
+
+
+def run(mode: str, only_username: Optional[str] = None):
+    if not cfg.anthropic_api_key:
+        sys.exit("Set ANTHROPIC_API_KEY")
+
+    store = get_store(cfg)
+    users = _resolve_users(store, only_username)
+    if not users:
+        sys.exit("No users to process. Add rows to the `users` table or set CHESSCOM_USERNAME.")
+    print(f"[{mode}] processing {len(users)} user(s): "
+          f"{', '.join(u['username'] for u in users)}", file=sys.stderr)
+
+    engine = analysis.open_engine(cfg.stockfish_path, cfg.engine_threads, cfg.engine_hash_mb)
+    try:
+        for user in users:
+            try:
+                _run_user(user, mode, store, engine)
+            except Exception as e:
+                print(f"[{mode}:{user['username']}] FAILED: {e}", file=sys.stderr)
+                try:
+                    store.log_run({"created_at": dt.datetime.utcnow().isoformat(),
+                                   "username": user["username"].lower(), "mode": mode,
+                                   "new_games": None, "recent_games": None,
+                                   "baseline_games": None, "status": f"error: {e}"})
+                except Exception:
+                    pass
+    finally:
+        engine.quit()
 
 
 def _build_trend(recent: dict, baseline: dict) -> dict:
@@ -187,8 +236,9 @@ def _build_trend(recent: dict, baseline: dict) -> dict:
 def main():
     ap = argparse.ArgumentParser(description="chess.com -> Stockfish -> Claude coaching pipeline")
     ap.add_argument("mode", choices=["backfill", "run"], help="backfill = full history; run = incremental")
+    ap.add_argument("--user", help="process only this chess.com handle (default: all active users)")
     args = ap.parse_args()
-    run(args.mode)
+    run(args.mode, only_username=args.user)
 
 
 if __name__ == "__main__":

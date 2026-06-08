@@ -175,7 +175,8 @@ def _schema(api_key: str, database_id: str) -> dict:
         return {}
 
 
-def _properties(schema: dict, title: str, metrics: dict, date_iso: Optional[str]):
+def _properties(schema: dict, title: str, metrics: dict, date_iso: Optional[str],
+                player: Optional[str] = None):
     """Only set properties that actually exist in the DB, so it never errors."""
     title_name = next((n for n, t in schema.items() if t == "title"), "Name")
     props = {title_name: {"title": [{"text": {"content": title[:2000]}}]}}
@@ -185,6 +186,12 @@ def _properties(schema: dict, title: str, metrics: dict, date_iso: Optional[str]
             props[name] = {"number": round(float(val), 1)}
     if date_iso and schema.get("Date") == "date":
         props["Date"] = {"date": {"start": date_iso}}
+    if player:
+        pt = schema.get("Player")
+        if pt == "select":
+            props["Player"] = {"select": {"name": player[:100]}}
+        elif pt == "rich_text":
+            props["Player"] = {"rich_text": [{"text": {"content": player[:2000]}}]}
     return props
 
 
@@ -246,7 +253,8 @@ def _data_tables(features: dict) -> list:
 
 
 def deliver_notion(api_key: str, database_id: str, title: str,
-                   result: dict, features: dict, date_iso: Optional[str] = None):
+                   result: dict, features: dict, date_iso: Optional[str] = None,
+                   player: Optional[str] = None):
     """Build a rich dashboard page: callout + prose + data tables + trend properties."""
     schema = _schema(api_key, database_id)
 
@@ -259,7 +267,7 @@ def deliver_notion(api_key: str, database_id: str, title: str,
         "Blunders": (features.get("error_counts") or {}).get("blunder"),
         "Score %": overall.get("score_pct"),
     }
-    properties = _properties(schema, title, metrics, date_iso)
+    properties = _properties(schema, title, metrics, date_iso, player)
 
     children = []
     if result.get("headline"):

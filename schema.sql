@@ -63,6 +63,7 @@ create index if not exists qa_log_user_idx on qa_log (username, created_at desc)
 create table if not exists runs (
     id              bigint generated always as identity primary key,
     created_at      timestamptz default now(),
+    username        text,               -- which player this run processed
     mode            text,               -- 'backfill' | 'run'
     new_games       integer,            -- games analyzed this run
     recent_games    integer,            -- games in the rolling 30-day window
@@ -70,3 +71,18 @@ create table if not exists runs (
     status          text                -- 'ok' or an error string
 );
 create index if not exists runs_created_idx on runs (created_at desc);
+
+-- roster of players to process. One row per chess.com handle. Delivery targets
+-- default to the global config (your Notion/Slack) when left null, so you only
+-- fill these in to route a player somewhere different.
+create table if not exists users (
+    username        text primary key,   -- chess.com handle (lowercased)
+    display_name    text,               -- friendly label (Notion "Player", Slack header)
+    time_classes    text[],             -- null = all; e.g. '{blitz,rapid}'
+    rated_only      boolean,            -- null = use config default
+    slack_webhook   text,               -- null = use default SLACK_WEBHOOK_URL
+    notion_db_id    text,               -- null = use default NOTION_DATABASE_ID
+    backfill_months integer default 3,  -- one-time backfill scope for this player
+    active          boolean default true,
+    created_at      timestamptz default now()
+);
